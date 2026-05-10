@@ -1,49 +1,80 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
-    Image,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  Alert,
+  Image,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 
 export default function PokemonDetail() {
   const router = useRouter();
-  const { name } = useLocalSearchParams();
+  const params = useLocalSearchParams();
+
+  const pokemonName = Array.isArray(params.name)
+    ? params.name[0]
+    : params.name;
+
   const [pokemon, setPokemon] = useState<any>(null);
-  const [evolutions, setEvolutions] = useState<string[]>([]);
+  const [evolutions, setEvolutions] = useState<any[]>([]);
 
   useEffect(() => {
-    if (!name) return;
+    if (!pokemonName) return;
 
-    fetch(`https://pokeapi.co/api/v2/pokemon/${name}`)
-      .then((res) => res.json())
-      .then((data) => setPokemon(data))
-      .catch((err) => console.log(err));
-  }, [name]);
+    let isActive = true;
 
-  useEffect(() => {
-    if (!name) return;
+    setPokemon(null);
+    setEvolutions([]);
 
-    fetch(`https://pokeapi.co/api/v2/pokemon-species/${name}`)
-      .then((res) => res.json())
-      .then((speciesData) => fetch(speciesData.evolution_chain.url))
-      .then((res) => res.json())
-      .then((evolutionData) => {
-        const chain: string[] = [];
+    const loadPokemonDetail = async () => {
+      try {
+        const pokemonRes = await fetch(
+          `https://pokeapi.co/api/v2/pokemon/${pokemonName}`
+        );
+        const pokemonData = await pokemonRes.json();
+
+        const speciesRes = await fetch(pokemonData.species.url);
+        const speciesData = await speciesRes.json();
+
+        const evolutionRes = await fetch(speciesData.evolution_chain.url);
+        const evolutionData = await evolutionRes.json();
+
+        const chainNames: string[] = [];
         let current = evolutionData.chain;
 
         while (current) {
-          chain.push(current.species.name);
+          chainNames.push(current.species.name);
           current = current.evolves_to[0];
         }
 
-        setEvolutions(chain);
-      })
-      .catch((err) => console.log(err));
-  }, [name]);
+        const evolutionDetails = await Promise.all(
+          chainNames.map(async (name) => {
+            const res = await fetch(
+              `https://pokeapi.co/api/v2/pokemon/${name}`
+            );
+            return res.json();
+          })
+        );
+
+        if (isActive) {
+          setPokemon(pokemonData);
+          setEvolutions(evolutionDetails);
+        }
+      } catch (err) {
+        console.log(err);
+      }
+    };
+
+    loadPokemonDetail();
+
+    return () => {
+      isActive = false;
+    };
+  }, [pokemonName]);
 
   if (!pokemon) {
     return (
@@ -60,6 +91,41 @@ export default function PokemonDetail() {
     pokemon.sprites.other['official-artwork'].front_default ||
     pokemon.sprites.front_default;
 
+  const saveFavorite = async () => {
+    try {
+      const oldData = await AsyncStorage.getItem('favorites');
+      const favorites = oldData ? JSON.parse(oldData) : [];
+
+      const newPokemon = {
+        id: pokemon.id,
+        name: pokemon.name,
+        image: imageUrl,
+        type: mainType,
+        height: pokemon.height,
+        weight: pokemon.weight,
+        baseExperience: pokemon.base_experience,
+      };
+
+      const isSaved = favorites.some(
+        (item: any) => item.name === pokemon.name
+      );
+
+      if (isSaved) {
+        Alert.alert('แจ้งเตือน', 'โปเกม่อนตัวนี้ถูกบันทึกแล้ว');
+        return;
+      }
+
+      await AsyncStorage.setItem(
+        'favorites',
+        JSON.stringify([...favorites, newPokemon])
+      );
+
+      Alert.alert('สำเร็จ', 'บันทึกโปเกม่อนที่ชอบแล้ว');
+    } catch (error) {
+      Alert.alert('ผิดพลาด', 'ไม่สามารถบันทึกได้');
+    }
+  };
+
   return (
     <View style={[styles.container, { backgroundColor: bgColor }]}>
       <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
@@ -72,6 +138,13 @@ export default function PokemonDetail() {
           <Text style={styles.name}>{pokemon.name}</Text>
 
           <Image source={{ uri: imageUrl }} style={styles.image} />
+
+          <TouchableOpacity
+            style={styles.favoriteButton}
+            onPress={saveFavorite}
+          >
+            <Text style={styles.favoriteText}>❤️ บันทึกเป็นตัวที่ชอบ</Text>
+          </TouchableOpacity>
 
           <View style={styles.typeContainer}>
             {pokemon.types.map((t: any) => (
@@ -112,17 +185,75 @@ export default function PokemonDetail() {
             ))}
           </View>
 
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Evolution</Text>
+          <View style={styles.evolutionSection}>
+            <Text style={styles.evolutionTitle}>Evolutions</Text>
 
-            <View style={styles.evolutionContainer}>
-              {evolutions.map((evo, index) => (
-                <Text key={evo} style={styles.evolutionText}>
-                  {evo}
-                  {index < evolutions.length - 1 ? '  →  ' : ''}
-                </Text>
-              ))}
-            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.evolutionScroll}
+            >
+              {evolutions.map((evo, index) => {
+                const evoImage =
+                  evo.sprites.other['official-artwork'].front_default ||
+                  evo.sprites.front_default;
+
+                return (
+                  <View key={evo.name} style={styles.evolutionItemWrap}>
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      style={styles.evolutionItem}
+                      onPress={() =>
+                        router.push({
+                          pathname: '/pokemon/[name]',
+                          params: { name: evo.name },
+                        })
+                      }
+                    >
+                      <View style={styles.evolutionCircle}>
+                        <Image
+                          source={{ uri: evoImage }}
+                          style={styles.evolutionImage}
+                          resizeMode="contain"
+                        />
+                      </View>
+
+                      <Text style={styles.evolutionName}>
+                        {evo.name}{' '}
+                        <Text style={styles.evolutionId}>
+                          #{String(evo.id).padStart(4, '0')}
+                        </Text>
+                      </Text>
+
+                      <View style={styles.evolutionTypes}>
+                        {evo.types.map((t: any) => {
+                          const typeName = t.type.name;
+
+                          return (
+                            <Text
+                              key={typeName}
+                              style={[
+                                styles.evolutionType,
+                                {
+                                  backgroundColor:
+                                    typeColors[typeName] || '#94a3b8',
+                                },
+                              ]}
+                            >
+                              {typeName}
+                            </Text>
+                          );
+                        })}
+                      </View>
+                    </TouchableOpacity>
+
+                    {index < evolutions.length - 1 && (
+                      <Text style={styles.arrow}>›</Text>
+                    )}
+                  </View>
+                );
+              })}
+            </ScrollView>
           </View>
 
           <View style={styles.section}>
@@ -228,6 +359,18 @@ const styles = StyleSheet.create({
     height: 210,
     marginBottom: 8,
   },
+  favoriteButton: {
+    backgroundColor: '#facc15',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 20,
+    marginBottom: 18,
+  },
+  favoriteText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#0f172a',
+  },
   typeContainer: {
     flexDirection: 'row',
     gap: 8,
@@ -279,15 +422,79 @@ const styles = StyleSheet.create({
     textTransform: 'capitalize',
     marginBottom: 4,
   },
-  evolutionContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+  evolutionSection: {
+    width: '100%',
+    marginTop: 16,
+    marginBottom: 12,
+    backgroundColor: '#555',
+    borderRadius: 16,
+    padding: 18,
+  },
+  evolutionTitle: {
+    color: '#fff',
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 16,
+  },
+  evolutionScroll: {
     alignItems: 'center',
   },
-  evolutionText: {
-    fontSize: 16,
+  evolutionItemWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  evolutionItem: {
+    alignItems: 'center',
+    width: 170,
+  },
+  evolutionCircle: {
+    width: 135,
+    height: 135,
+    borderRadius: 100,
+    borderWidth: 5,
+    borderColor: '#fff',
+    backgroundColor: '#666',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  evolutionImage: {
+    width: 110,
+    height: 110,
+  },
+  evolutionName: {
+    color: '#fff',
+    fontSize: 20,
     fontWeight: 'bold',
     textTransform: 'capitalize',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  evolutionId: {
+    color: '#cbd5e1',
+    fontWeight: 'normal',
+  },
+  evolutionTypes: {
+    flexDirection: 'row',
+    gap: 6,
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+  },
+  evolutionType: {
+    color: '#fff',
+    paddingHorizontal: 14,
+    paddingVertical: 5,
+    borderRadius: 8,
+    textTransform: 'capitalize',
+    fontWeight: 'bold',
+    fontSize: 13,
+    overflow: 'hidden',
+  },
+  arrow: {
+    fontSize: 70,
+    color: '#fff',
+    marginHorizontal: 14,
+    fontWeight: '300',
   },
   statRow: {
     marginBottom: 12,

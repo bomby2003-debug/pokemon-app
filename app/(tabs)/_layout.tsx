@@ -32,12 +32,26 @@ export default function TabLayout() {
       />
 
       <Tabs.Screen
+        name="favorites"
+        options={{
+          title: 'Favorites',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="heart" size={size} color={color} />
+          ),
+        }}
+      />
+
+      <Tabs.Screen
         name="explore"
         options={{
-          title: 'Explore',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="compass" size={size} color={color} />
-          ),
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="pokemon/[name]"
+        options={{
+          href: null,
         }}
       />
     </Tabs>
